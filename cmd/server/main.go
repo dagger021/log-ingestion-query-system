@@ -18,8 +18,10 @@ import (
 	"github.com/dagger021/log-ingestion-query-system/internal/config"
 	"github.com/dagger021/log-ingestion-query-system/internal/handlers"
 	"github.com/dagger021/log-ingestion-query-system/internal/kafka"
+	"github.com/dagger021/log-ingestion-query-system/internal/logger"
 	"github.com/dagger021/log-ingestion-query-system/internal/services"
 	"github.com/go-chi/chi"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -27,25 +29,35 @@ func main() {
 
 	cfg, err := config.InitConfig()
 	if err != nil {
-		log.Fatalf("failed initializing config")
+		log.Fatalf("failed initializing config: %v", err)
+	}
+
+	mainLogger, err := logger.New(cfg)
+	if err != nil {
+		log.Fatalf("failed initializing logger: %v", err)
 	}
 
 	chConn, err := clickhouse.InitConn(cfg.ClickhouseDSN)
 	if err != nil {
-		log.Fatalf("failed to connect to clickhouse: %s", err)
+		mainLogger.Fatal("failed connecting to clickhouse", zap.Error(err))
 	}
 	defer chConn.Close()
 
 	// migrate file
 	if err := clickhouse.Migrate(chConn, "./schema.sql"); err != nil {
-		log.Fatalf("failed to migirate: %s", err)
+		mainLogger.Fatal("failed migration", zap.Error(err))
 	}
 
+	apiLogger := mainLogger.Named("api")
+	kafkaLogger := mainLogger.Named("kafka")
+
 	kafkaBrokers := []string{cfg.KafkaBroker}
-	producer := kafka.NewProducer(kafkaBrokers)
+	producer := kafka.NewProducer(kafkaBrokers, kafkaLogger.Named("producer"))
 	defer producer.Close()
 
-	consumer := kafka.NewConsumer(kafkaBrokers, chConn, producer)
+	consumer := kafka.NewConsumer(
+		kafkaBrokers, chConn, producer, kafkaLogger.Named("consumer"),
+	)
 
 	// shutdown context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -70,8 +82,10 @@ func main() {
 	wg.Go(func() { consumer.Run(ctx) })
 
 	wg.Go(func() {
+		apiLogger.Info(("server initiated @ " + server.Addr))
+
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Println("server failed:", err)
+			apiLogger.Error("server failed", zap.Error(err))
 			cancel()
 		}
 	})
@@ -82,16 +96,17 @@ func main() {
 	<-quit // wait for quit signal
 	signal.Stop(quit)
 
-	log.Printf("shutdown initiated")
+	mainLogger.Info("shutdown initiated")
 	cancel()
 
 	ctxShutdown, cancelTimeout := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelTimeout()
 
 	if err := server.Shutdown(ctxShutdown); err != nil {
-		log.Printf("failed to shutdown server gracefully: %s", err)
+		apiLogger.Error("failed to shutdown server gracefully", zap.Error(err))
 	}
 
 	// wait for all go-routines
 	wg.Wait()
+	mainLogger.Info("shutdown complete")
 }
