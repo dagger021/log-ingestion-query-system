@@ -1,15 +1,15 @@
-CREATE TABLE logs (
+CREATE TABLE log_entries (
     id String,
 
     level LowCardinality(String),
     message String,
-    resource_id String,
+    resourceId String,
     timestamp DateTime64(3),
-    trace_id String,
-    span_id String,
+    traceId String,
+    spanId String,
     commit String,
-    parent_resource_id String,
+    parent_resourceId String,
 )
 ENGINE = ReplacingMergeTree()
 PARTITION BY toDate(timestamp)
-ORDER BY (timestamp, resource_id, trace_id, span_id, id);
+ORDER BY (timestamp, resourceId, traceId, spanId, id);
