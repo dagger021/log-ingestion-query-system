@@ -8,7 +8,11 @@ import (
 	"github.com/google/uuid"
 )
 
-type LogEntry struct {
+type Metadata struct {
+	ParentResourceID string `json:"parentResourceId"`
+}
+
+type baseLogEntry struct {
 	ID         uuid.UUID `json:"id"`
 	Level      LogLevel  `json:"level"`
 	Message    string    `json:"message"`
@@ -17,10 +21,29 @@ type LogEntry struct {
 	TraceID    string    `json:"traceId"`
 	SpanID     string    `json:"spanId"`
 	Commit     string    `json:"commit"`
+}
 
-	Metadata struct {
-		ParentResourceID string `json:"parentResourceId"`
-	} `json:"metadata"`
+type LogEntry struct {
+	baseLogEntry
+	Metadata Metadata `json:"metadata"`
+}
+
+type LogEntryDB struct {
+	baseLogEntry
+	ParentResourceID string `json:"parentResourceId"`
+}
+
+func (l *LogEntryDB) ToDomain() LogEntry {
+	return LogEntry{
+		baseLogEntry: l.baseLogEntry,
+		Metadata:     Metadata{ParentResourceID: l.ParentResourceID},
+	}
+}
+func (l *LogEntry) ToDB() LogEntryDB {
+	return LogEntryDB{
+		baseLogEntry:     l.baseLogEntry,
+		ParentResourceID: l.Metadata.ParentResourceID,
+	}
 }
 
 func ParseLogFromJSON(data []byte) (*LogEntry, error) {
@@ -29,8 +52,8 @@ func ParseLogFromJSON(data []byte) (*LogEntry, error) {
 		return nil, err
 	}
 
-	if _, ok := ToLogLevel(string(log.Level)); !ok {
-		return nil, errors.New("invaild log level")
+	if err := log.Validate(); err != nil {
+		return nil, err
 	}
 
 	// populate log ID
@@ -38,11 +61,13 @@ func ParseLogFromJSON(data []byte) (*LogEntry, error) {
 	return &log, nil
 }
 
-func (l *LogEntry) ToJSON() ([]byte, error) {
-	data, err := json.Marshal(l)
-	if err != nil {
-		return nil, err
+func (l *baseLogEntry) Validate() error {
+	if _, ok := ToLogLevel(string(l.Level)); !ok {
+		return errors.New("invaild log level")
 	}
+	return nil
+}
 
-	return data, nil
+func (l LogEntry) ToJSON() ([]byte, error) {
+	return json.Marshal(l)
 }
