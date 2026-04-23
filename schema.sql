@@ -1,4 +1,4 @@
-CREATE TABLE log_entries (
+CREATE TABLE IF NOT EXISTS logEntries (
     id String,
 
     level LowCardinality(String),
