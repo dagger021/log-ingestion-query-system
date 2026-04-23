@@ -8,6 +8,6 @@ const (
 
 	ClickhouseDSN = "clickhouse://@localhost:9000/default"
 
-	BatchSize     = 1000
+	MaxBatchSize  = 1000
 	FlushInterval = 2 * time.Second // flush batches in every two seconds, if batch is not full
 )
