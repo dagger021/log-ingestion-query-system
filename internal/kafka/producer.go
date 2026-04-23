@@ -55,12 +55,16 @@ func (p *producer) writeWithRetries(c context.Context, key, value []byte) error 
 }
 
 func (p *producer) SendToDLQ(c context.Context, key, value []byte, ogErr error) error {
-	msgBytes, _ := json.Marshal(DLQMessage{
+	msgBytes, err := json.Marshal(DLQMessage{
 		EventID:   string(key),
 		Payload:   value,
 		Error:     ogErr.Error(),
 		Timestamp: time.Now(),
 	})
+
+	if err != nil {
+		return err
+	}
 
 	return p.dlq.WriteMessages(c, kafka.Message{
 		Key:     key,
