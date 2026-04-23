@@ -8,6 +8,7 @@ import (
 	"github.com/dagger021/log-ingestion-query-system/internal/domain"
 	"github.com/dagger021/log-ingestion-query-system/pkg/retry"
 	"github.com/segmentio/kafka-go"
+	"go.uber.org/zap"
 )
 
 type Producer interface {
@@ -19,16 +20,20 @@ type Producer interface {
 }
 
 type producer struct {
+	logger      *zap.Logger
 	writer, dlq *kafka.Writer
 }
 
-func NewProducer(brokers []string) Producer {
+func NewProducer(brokers []string, logger *zap.Logger) Producer {
 	return &producer{
+		logger: logger,
+
 		writer: &kafka.Writer{
 			Addr:     kafka.TCP(brokers...),
 			Topic:    string(LogsTopic),
 			Balancer: &kafka.Hash{},
 		},
+
 		dlq: &kafka.Writer{
 			Addr:     kafka.TCP(brokers...),
 			Topic:    string(DLQTopic),
@@ -38,6 +43,8 @@ func NewProducer(brokers []string) Producer {
 }
 
 func (p *producer) Close() error {
+	defer p.logger.Info("producer closed")
+
 	if err := p.writer.Close(); err != nil {
 		return err
 	}

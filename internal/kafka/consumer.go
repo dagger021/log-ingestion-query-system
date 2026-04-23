@@ -9,6 +9,7 @@ import (
 	"github.com/dagger021/log-ingestion-query-system/internal/domain"
 	"github.com/dagger021/log-ingestion-query-system/pkg/retry"
 	"github.com/segmentio/kafka-go"
+	"go.uber.org/zap"
 )
 
 type Consumer interface {
@@ -21,14 +22,17 @@ type batchItem struct {
 }
 
 type consumer struct {
-	producer Producer // for DLQ -> producer.dlq
+	logger *zap.Logger
 
-	reader *kafka.Reader
-	chConn clickhouse.Conn
+	producer Producer // for DLQ -> producer.dlq
+	reader   *kafka.Reader
+	chConn   clickhouse.Conn
 }
 
-func NewConsumer(brokers []string, chConn clickhouse.Conn, producer Producer) Consumer {
+func NewConsumer(brokers []string, chConn clickhouse.Conn, producer Producer, logger *zap.Logger) Consumer {
 	return &consumer{
+		logger: logger,
+
 		producer: producer,
 
 		reader: kafka.NewReader(kafka.ReaderConfig{
@@ -41,8 +45,19 @@ func NewConsumer(brokers []string, chConn clickhouse.Conn, producer Producer) Co
 	}
 }
 
+func (c *consumer) Close() {
+	if err := c.reader.Close(); err != nil {
+		c.logger.Error("error closing consumer", zap.Error(err))
+		return
+	}
+
+	c.logger.Info("consumer closed")
+}
+
 func (c *consumer) Run(ctx context.Context) {
-	defer c.reader.Close()
+	defer c.Close()
+
+	c.logger.Info("initiating")
 
 	flushTicker := time.NewTicker(config.FlushInterval)
 	defer flushTicker.Stop()
@@ -60,6 +75,7 @@ func (c *consumer) Run(ctx context.Context) {
 				if err :=
 					c.producer.SendToDLQ(ctx, item.msg.Key, item.msg.Value, err); err != nil {
 					// log -> DLQ failed
+					c.logger.Error("logs DLQ failed", zap.Error(err))
 				}
 
 			}
@@ -75,7 +91,7 @@ func (c *consumer) Run(ctx context.Context) {
 
 		if err := c.reader.CommitMessages(ctx, msgs...); err != nil {
 			// commit failure -> don't clear batch
-			// log failure
+			c.logger.Error("failed committing messages", zap.Error(err))
 			return
 		}
 
