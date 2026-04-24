@@ -49,6 +49,7 @@ func InitConfig() (*EnvConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.ClickhouseDSN = envVal
 
 	return &cfg, nil
 }
