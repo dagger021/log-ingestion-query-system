@@ -75,6 +75,7 @@ func main() {
 
 	app := chi.NewRouter()
 	app.Mount("/api", api.SetupAPI(apiLogger, logEntryHandler))
+	app.Mount("/", api.SetupTemplates(apiLogger, logEntryHandler))
 
 	server := &http.Server{
 		Addr:         ":3000",

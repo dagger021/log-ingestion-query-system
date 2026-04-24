@@ -24,3 +24,10 @@ func SetupAPI(logger *zap.Logger, hdlr handlers.LogEntryHandler) chi.Router {
 
 	return router
 }
+
+func SetupTemplates(logger *zap.Logger, hdlr handlers.LogEntryHandler) chi.Router {
+	router := chi.NewRouter()
+	router.Get("/logs", hdlr.GetLogsTemplate)
+
+	return router
+}

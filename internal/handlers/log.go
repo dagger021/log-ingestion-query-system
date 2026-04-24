@@ -2,9 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/dagger021/log-ingestion-query-system/internal/domain"
 	"github.com/dagger021/log-ingestion-query-system/internal/logger"
@@ -14,6 +13,8 @@ import (
 
 type LogEntryHandler interface {
 	GetLogs(http.ResponseWriter, *http.Request)
+
+	GetLogsTemplate(http.ResponseWriter, *http.Request)
 
 	PostLog(http.ResponseWriter, *http.Request)
 }
@@ -28,50 +29,19 @@ func (h *logEntryHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	log := logger.FromContext(ctx)
 
 	q := r.URL.Query()
-	filter := services.GetLogsFilter{}
+	filter := services.GetLogsFilter{
+		Levels:      parseArray(q, "level"),
+		ResourceIds: parseArray(q, "resourceId"),
+		TraceIds:    parseArray(q, "traceId"),
 
-	if vals := q["level"]; len(vals) > 0 {
-		filter.Levels = vals
-	}
+		MessageRegex:  parseOne(q, "message"),
+		MessageTokens: parseArray(q, "token"),
 
-	if vals := q["resourceId"]; len(vals) > 0 {
-		filter.ResourceIds = vals
-	}
+		FromTime: parseTime(q, "from"),
+		ToTime:   parseTime(q, "to"),
 
-	if vals := q["traceId"]; len(vals) > 0 {
-		filter.TraceIds = vals
-	}
-
-	if v := q.Get("message"); v != "" {
-		filter.MessageRegex = &v
-	}
-
-	if vals := q["token"]; len(vals) > 0 {
-		filter.MessageTokens = vals
-	}
-
-	if v := q.Get("from"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			filter.FromTime = &t
-		}
-	}
-
-	if v := q.Get("to"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			filter.ToTime = &t
-		}
-	}
-
-	if v := q.Get("limit"); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
-			filter.Limit = n
-		}
-	}
-
-	if v := q.Get("offset"); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
-			filter.Offset = n
-		}
+		Limit:  parseUint(q, "limit"),
+		Offset: parseUint(q, "offset"),
 	}
 
 	logEntries, err := h.svc.GetLogs(ctx, filter)
@@ -82,6 +52,54 @@ func (h *logEntryHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, logEntries)
+}
+
+func (h *logEntryHandler) GetLogsTemplate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	q := r.URL.Query()
+	filter := services.GetLogsFilter{
+		Levels:      parseArray(q, "level"),
+		ResourceIds: parseArray(q, "resourceId"),
+		TraceIds:    parseArray(q, "traceId"),
+
+		MessageRegex:  parseOne(q, "message"),
+		MessageTokens: parseArray(q, "token"),
+
+		FromTime: parseTime(q, "from"),
+		ToTime:   parseTime(q, "to"),
+
+		Limit:  parseUint(q, "limit"),
+		Offset: parseUint(q, "offset"),
+	}
+
+	logEntries, err := h.svc.GetLogs(ctx, filter)
+	if err != nil {
+		log.Error("error selecting logEntries", zap.Error(err))
+		WriteError(w, http.StatusInternalServerError, "invalid response payload")
+		return
+	}
+
+	data := struct{ Logs any }{Logs: logEntries}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	templatePath := "templates/index.gotmpl"
+	tmpl, err := template.ParseFiles(templatePath)
+	if err != nil {
+		log.Error(
+			"UI template not found",
+			zap.Error(err),
+			zap.Any("template-path", templatePath),
+		)
+		WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := tmpl.ExecuteTemplate(w, "index", data); err != nil {
+		log.Error("error rendering template", zap.Error(err), zap.Any("template-path", templatePath))
+		WriteError(w, http.StatusInternalServerError, "template error: "+err.Error())
+	}
 }
 
 // PostLog implements [LogEntryHandler].
