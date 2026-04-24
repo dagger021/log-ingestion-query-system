@@ -10,7 +10,7 @@ import (
 
 type LogEntryService interface {
 	// GetLogs returns all logs from the storage.
-	GetLogs(context.Context) ([]domain.LogEntry, error)
+	GetLogs(context.Context, GetLogsFilter) ([]domain.LogEntry, error)
 
 	// StoreLog stores the logEntry into the storage.
 	StoreLog(context.Context, domain.LogEntry) error
@@ -27,9 +27,47 @@ const (
 )
 
 // GetLogs implements [LogEntryService].
-func (s *logEntryService) GetLogs(c context.Context) ([]domain.LogEntry, error) {
+func (s *logEntryService) GetLogs(
+	c context.Context, f GetLogsFilter,
+) ([]domain.LogEntry, error) {
+	query := baseLogEntrySelect + " WHERE 1=1" // selects all
+	args := []any{}
+
+	if f.Level != nil {
+		query += " AND level = ?"
+		args = append(args, *f.Level)
+	}
+
+	if f.ResourceId != nil {
+		query += " AND resourceId = ?"
+		args = append(args, *f.ResourceId)
+	}
+
+	if f.TraceId != nil {
+		query += " AND traceId = ?"
+		args = append(args, *f.TraceId)
+	}
+
+	if f.FromTime != nil {
+		query += " AND fromTime >= ?"
+		args = append(args, *f.FromTime)
+	}
+
+	if f.ToTime != nil {
+		query += " AND toTime <= ?"
+		args = append(args, *f.ToTime)
+	}
+
+	query += " ORDER BY timestamp DESC" // latest logs first
+	// pagination
+	if f.Limit == 0 {
+		f.Limit = 100 // default default
+	}
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, f.Limit, f.Offset)
+
 	var logEntriesDB []domain.LogEntryDB
-	if err := s.chConn.Select(c, &logEntriesDB, baseLogEntrySelect); err != nil {
+	if err := s.chConn.Select(c, &logEntriesDB, query); err != nil {
 		return nil, err
 	}
 

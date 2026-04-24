@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/dagger021/log-ingestion-query-system/internal/domain"
 	"github.com/dagger021/log-ingestion-query-system/internal/logger"
@@ -25,7 +27,46 @@ func (h *logEntryHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
 
-	logEntries, err := h.svc.GetLogs(ctx)
+	q := r.URL.Query()
+	filter := services.GetLogsFilter{}
+
+	if v := q.Get("level"); v != "" {
+		filter.Level = &v
+	}
+
+	if v := q.Get("resourceId"); v != "" {
+		filter.ResourceId = &v
+	}
+
+	if v := q.Get("traceId"); v != "" {
+		filter.TraceId = &v
+	}
+
+	if v := q.Get("from"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.FromTime = &t
+		}
+	}
+
+	if v := q.Get("to"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.ToTime = &t
+		}
+	}
+
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+			filter.Limit = n
+		}
+	}
+
+	if v := q.Get("offset"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+			filter.Offset = n
+		}
+	}
+
+	logEntries, err := h.svc.GetLogs(ctx, filter)
 	if err != nil {
 		log.Error("error selecting logEntries", zap.Error(err))
 		WriteError(w, http.StatusInternalServerError, "invalid response payload")
