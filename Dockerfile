@@ -28,6 +28,7 @@ RUN apk add --no-cache ca-certificates
 
 COPY --from=builder /app/server .
 COPY --from=builder /app/schema.sql .
+COPY --from=builder /app/templates ./templates
 
 EXPOSE 3000
 
