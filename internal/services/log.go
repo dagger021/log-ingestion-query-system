@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/dagger021/log-ingestion-query-system/internal/domain"
 	"github.com/dagger021/log-ingestion-query-system/internal/kafka"
+	"github.com/dagger021/log-ingestion-query-system/internal/logger"
+	"go.uber.org/zap"
 )
 
 type LogEntryService interface {
@@ -33,29 +36,54 @@ func (s *logEntryService) GetLogs(
 	query := baseLogEntrySelect + " WHERE 1=1" // selects all
 	args := []any{}
 
-	if f.Level != nil {
-		query += " AND level = ?"
-		args = append(args, *f.Level)
-	}
-
-	if f.ResourceId != nil {
-		query += " AND resourceId = ?"
-		args = append(args, *f.ResourceId)
-	}
-
-	if f.TraceId != nil {
-		query += " AND traceId = ?"
-		args = append(args, *f.TraceId)
-	}
-
+	// time-range filter
 	if f.FromTime != nil {
-		query += " AND fromTime >= ?"
+		query += " AND timestamp >= ?"
 		args = append(args, *f.FromTime)
 	}
 
 	if f.ToTime != nil {
-		query += " AND toTime <= ?"
+		query += " AND timestamp <= ?"
 		args = append(args, *f.ToTime)
+	}
+
+	// multi filters
+	if len(f.Levels) > 0 {
+		placeholders := make([]string, len(f.Levels))
+		for i, val := range f.Levels {
+			placeholders[i] = "?"
+			args = append(args, val)
+		}
+		query += " AND level IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	if len(f.ResourceIds) > 0 {
+		placeholders := make([]string, len(f.ResourceIds))
+		for i, val := range f.ResourceIds {
+			placeholders[i] = "?"
+			args = append(args, val)
+		}
+		query += " AND resourceId IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	if len(f.TraceIds) > 0 {
+		placeholders := make([]string, len(f.TraceIds))
+		for i, val := range f.TraceIds {
+			placeholders[i] = "?"
+			args = append(args, val)
+		}
+		query += " AND traceId IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	// regex search on Message
+	if f.MessageRegex != nil && *f.MessageRegex != "" {
+		query += " AND match(message, ?)"
+		args = append(args, *f.MessageRegex)
+	} else {
+		for _, token := range f.MessageTokens {
+			query += " AND hasToken(message, ?)"
+			args = append(args, token)
+		}
 	}
 
 	query += " ORDER BY timestamp DESC" // latest logs first
@@ -63,11 +91,15 @@ func (s *logEntryService) GetLogs(
 	if f.Limit == 0 {
 		f.Limit = 100 // default default
 	}
+	f.Limit = min(1000, f.Limit) // limit upper-bound to 1000
+
 	query += " LIMIT ? OFFSET ?"
 	args = append(args, f.Limit, f.Offset)
 
+	log := logger.FromContext(c)
+	log.Debug("select query to db", zap.Any("query", query), zap.Any("query args", args))
 	var logEntriesDB []domain.LogEntryDB
-	if err := s.chConn.Select(c, &logEntriesDB, query); err != nil {
+	if err := s.chConn.Select(c, &logEntriesDB, query, args...); err != nil {
 		return nil, err
 	}
 

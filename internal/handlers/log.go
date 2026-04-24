@@ -30,16 +30,24 @@ func (h *logEntryHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filter := services.GetLogsFilter{}
 
-	if v := q.Get("level"); v != "" {
-		filter.Level = &v
+	if vals := q["level"]; len(vals) > 0 {
+		filter.Levels = vals
 	}
 
-	if v := q.Get("resourceId"); v != "" {
-		filter.ResourceId = &v
+	if vals := q["resourceId"]; len(vals) > 0 {
+		filter.ResourceIds = vals
 	}
 
-	if v := q.Get("traceId"); v != "" {
-		filter.TraceId = &v
+	if vals := q["traceId"]; len(vals) > 0 {
+		filter.TraceIds = vals
+	}
+
+	if v := q.Get("message"); v != "" {
+		filter.MessageRegex = &v
+	}
+
+	if vals := q["token"]; len(vals) > 0 {
+		filter.MessageTokens = vals
 	}
 
 	if v := q.Get("from"); v != "" {
