@@ -36,6 +36,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed initializing logger: %v", err)
 	}
+	// debug config
+	mainLogger.Debug("environment config", zap.Any("config", cfg))
 
 	chConn, err := clickhouse.InitConn(cfg.ClickhouseDSN)
 	if err != nil {
@@ -52,6 +54,11 @@ func main() {
 	kafkaLogger := mainLogger.Named("kafka")
 
 	kafkaBrokers := []string{cfg.KafkaBroker}
+
+	if err := kafka.EnsureTopics(kafkaBrokers, kafkaLogger); err != nil {
+		kafkaLogger.Fatal("failed to ensure topics", zap.Error(err))
+	}
+
 	producer := kafka.NewProducer(kafkaBrokers, kafkaLogger.Named("producer"))
 	defer producer.Close()
 
@@ -63,11 +70,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Inject services -> handlers
-	logEntryService := services.NewLogEntryService(chConn)
+	logEntryService := services.NewLogEntryService(chConn, producer)
 	logEntryHandler := handlers.NewLogEntryHandler(logEntryService)
 
 	app := chi.NewRouter()
-	app.Mount("/api", api.SetupAPI(logEntryHandler))
+	app.Mount("/api", api.SetupAPI(apiLogger, logEntryHandler))
 
 	server := &http.Server{
 		Addr:         ":3000",
