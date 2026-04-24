@@ -1,10 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/dagger021/log-ingestion-query-system/internal/domain"
+	"github.com/dagger021/log-ingestion-query-system/internal/logger"
 	"github.com/dagger021/log-ingestion-query-system/internal/services"
+	"go.uber.org/zap"
 )
 
 type LogEntryHandler interface {
@@ -19,9 +22,13 @@ type logEntryHandler struct {
 
 // GetLogs implements [LogEntryHandler].
 func (h *logEntryHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
-	logEntries, err := h.svc.GetLogs(r.Context())
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	logEntries, err := h.svc.GetLogs(ctx)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid request body")
+		log.Error("error selecting logEntries", zap.Error(err))
+		WriteError(w, http.StatusInternalServerError, "invalid response payload")
 		return
 	}
 
@@ -30,24 +37,21 @@ func (h *logEntryHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 
 // PostLog implements [LogEntryHandler].
 func (h *logEntryHandler) PostLog(w http.ResponseWriter, r *http.Request) {
-	var body []byte
-	if n, err := r.Body.Read(body); err != nil || n == 0 {
-		WriteError(w, http.StatusBadRequest, "no body")
-		return
-	}
-
-	logEntry, err := domain.ParseLogFromJSON(body)
-	if err != nil {
+	var logEntry domain.LogEntry
+	if err := json.NewDecoder(r.Body).Decode(&logEntry); err != nil {
 		WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	if err := h.svc.StoreLog(r.Context(), *logEntry); err != nil {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	if err := h.svc.StoreLog(ctx, logEntry); err != nil {
+		log.Error("error storing logEntry", zap.Error(err))
 		WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, "log processed")
+	WriteJSON(w, http.StatusOK, map[string]string{"message": "log processed"})
 }
 
 func NewLogEntryHandler(svc services.LogEntryService) LogEntryHandler {

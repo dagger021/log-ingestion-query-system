@@ -23,14 +23,23 @@ type logEntryService struct {
 
 const (
 	logColumns         = "id, level, message, resourceId, timestamp, traceId, spanId, commit, parentResourceId"
-	baseLogEntrySelect = "SELECT " + logColumns + " FROM log_entries"
+	baseLogEntrySelect = "SELECT " + logColumns + " FROM logEntries"
 )
 
 // GetLogs implements [LogEntryService].
 func (s *logEntryService) GetLogs(c context.Context) ([]domain.LogEntry, error) {
-	var logEntries []domain.LogEntry
-	if err := s.chConn.Select(c, &logEntries, baseLogEntrySelect); err != nil {
+	var logEntriesDB []domain.LogEntryDB
+	if err := s.chConn.Select(c, &logEntriesDB, baseLogEntrySelect); err != nil {
 		return nil, err
+	}
+
+	logEntries := make([]domain.LogEntry, len(logEntriesDB))
+	for i, l := range logEntriesDB {
+		logEntry, err := l.ToDomain()
+		if err != nil {
+			return nil, err
+		}
+		logEntries[i] = *logEntry
 	}
 
 	return logEntries, nil
@@ -44,6 +53,6 @@ func (s *logEntryService) StoreLog(c context.Context, logEntry domain.LogEntry) 
 	return nil
 }
 
-func NewLogEntryService(chConn clickhouse.Conn) LogEntryService {
-	return &logEntryService{chConn: chConn}
+func NewLogEntryService(chConn clickhouse.Conn, producer kafka.Producer) LogEntryService {
+	return &logEntryService{chConn: chConn, producer: producer}
 }
