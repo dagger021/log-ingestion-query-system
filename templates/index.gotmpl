@@ -1,0 +1,385 @@
+{{define "index"}}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Log Ingestor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background: #f5f7fb;
+            color: #333;
+        }
+
+        header {
+            background: #111827;
+            color: white;
+            padding: 16px 24px;
+            font-size: 20px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .container {
+            padding: 20px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .row-group {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 12px;
+        }
+
+        .row-group>* {
+            flex: 1;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            margin-inline: 10px;
+        }
+
+        .field input,
+        .field select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+        }
+
+        select[multiple] {
+            height: 90px;
+        }
+
+        .actions {
+            margin-top: 12px;
+            text-align: right;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        .pagination {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        th,
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            font-size: 14px;
+            text-align: left;
+        }
+
+        th {
+            background: #f3f4f6;
+        }
+
+        .level-debug {
+            color: #259feb;
+        }
+
+        .level-info {
+            color: #2563eb;
+        }
+
+        .level-warn {
+            color: #d97706;
+        }
+
+        .level-error {
+            color: #dc2626;
+        }
+
+        .level-critical {
+            color: #9a1b1b;
+        }
+
+        .dropdown {
+            position: relative;
+            margin-inline: 10px;
+        }
+
+        .dropdown-toggle {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+        }
+
+        .dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 10;
+            padding: 8px;
+        }
+
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 6px;
+            cursor: pointer;
+        }
+
+        .dropdown-item input {
+            width: auto;
+            height: auto;
+            margin: 0;
+            flex: 0 0 auto;
+        }
+
+        .dropdown-item:hover {
+            background: #f3f4f6;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <header>Log Query Interface</header>
+
+    <div class="container">
+
+        <div class="form-grid">
+
+            <!-- MULTI-SELECT LEVEL -->
+            <div class="dropdown">
+                <label>Level</label>
+                <div class="dropdown-toggle" onclick="toggleDropdown('levelDropdown')">
+                    Select levels
+                </div>
+                <div id="levelDropdown" class="dropdown-menu">
+                    <label class="dropdown-item">
+                        <input type="checkbox" value="info">
+                        <span>Info</span>
+                    </label>
+                    <label class="dropdown-item">
+                        <input type="checkbox" value="warn">
+                        <span>Warn</span>
+                    </label>
+                    <label class="dropdown-item">
+                        <input type="checkbox" value="error">
+                        <span>Error</span>
+                    </label>
+                    <label class="dropdown-item">
+                        <input type="checkbox" value="debug">
+                        <span>Debug</span>
+                    </label>
+                    <label class="dropdown-item">
+                        <input type="checkbox" value="critical">
+                        <span>Critical</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- REGEX MESSAGE -->
+            <div class="field">
+                <label for="message">Message (regex)</label>
+                <input id="message" placeholder="e.g. error|timeout|failed.*" />
+            </div>
+
+            <div class="row-group">
+                <div class="field">
+                    <label for="resourceId">Resource ID</label>
+                    <input id="resourceId" />
+                </div>
+
+                <div class="field">
+                    <label for="traceId">Trace ID</label>
+                    <input id="traceId" />
+                </div>
+
+                <div class="field">
+                    <label for="spanId">Span ID</label>
+                    <input id="spanId" />
+                </div>
+            </div>
+
+            <div class="row-group">
+                <div class="field">
+                    <label for="commit">Commit</label>
+                    <input id="commit" />
+                </div>
+
+                <div class="field">
+                    <label for="parentResourceId">Parent Resource ID</label>
+                    <input id="parentResourceId" />
+                </div>
+            </div>
+
+            <div class="row-group">
+                <div class="field">
+                    <label for="from">From Timestamp</label>
+                    <input id="from" type="datetime-local" />
+                </div>
+                <div class="field">
+                    <label for="to">To Timestamp</label>
+                    <input id="to" type="datetime-local" />
+                </div>
+            </div>
+
+            <!-- PAGINATION -->
+            <div class="row-group">
+                <div class="field">
+                    <label for="limit">Limit</label>
+                    <input id="limit" type="number" placeholder="e.g. 50" />
+                </div>
+
+                <div class="field">
+                    <label for="offset">Offset</label>
+                    <input id="offset" type="number" placeholder="e.g. 0" />
+                </div>
+            </div>
+        </div>
+
+        <div class="actions">
+            <button onclick="applyFilters()">Search Logs</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Level</th>
+                    <th>Message</th>
+                    <th>Resource ID</th>
+                    <th>Trace ID</th>
+                    <th>Span ID</th>
+                    <th>Commit</th>
+                    <th>Parent Resource ID</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .Logs}}
+                <tr>
+                    <td>{{.Timestamp}}</td>
+                    <td class="level-{{.Level}}">{{.Level}}</td>
+                    <td>{{.Message}}</td>
+                    <td>{{.ResourceID}}</td>
+                    <td>{{.TraceID}}</td>
+                    <td>{{.SpanID}}</td>
+                    <td>{{.Commit}}</td>
+                    <td>{{.Metadata.ParentResourceID}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+
+    </div>
+
+    <script>
+        function toggleDropdown(id) {
+            const el = document.getElementById(id);
+            el.style.display = el.style.display === "block" ? "none" : "block";
+        }
+
+        // close when clicking outside
+        document.addEventListener("click", function (e) {
+            if (!e.target.closest(".dropdown")) {
+                document.querySelectorAll(".dropdown-menu")
+                    .forEach(d => d.style.display = "none");
+            }
+        });
+
+        function getCheckedValues(containerId) {
+            return Array.from(document.querySelectorAll(`#${containerId} input:checked`))
+                .map(cb => cb.value);
+        }
+
+        function applyFilters() {
+            const params = new URLSearchParams();
+
+            // levels
+            getCheckedValues("levelDropdown")
+                .forEach(v => params.append("level", v));
+
+            const fields = [
+                "message",
+                "traceId",
+                "spanId",
+                "commit",
+                "parentResourceId",
+                "from",
+                "to",
+                "limit",
+                "offset"
+            ];
+
+            fields.forEach(id => {
+                const el = document.getElementById(id);
+                if (el && el.value) {
+                    params.append(id, el.value);
+                }
+            });
+
+            window.location.href = window.location.pathname + "?" + params.toString();
+        }
+
+        function updateDropdownLabel(containerId, toggleText) {
+            const values = getCheckedValues(containerId);
+            const toggle = document.querySelector(`[onclick="toggleDropdown('${containerId}')"]`);
+
+            if (values.length === 0) {
+                toggle.textContent = toggleText;
+            } else {
+                toggle.textContent = values.join(", ");
+            }
+        }
+
+        // call after checkbox change
+        document.querySelectorAll("#levelDropdown input").forEach(cb => {
+            cb.addEventListener("change", () => {
+                updateDropdownLabel("levelDropdown", "Select levels");
+            });
+        });
+    </script>
+
+</body>
+
+</html>
+{{end}}
