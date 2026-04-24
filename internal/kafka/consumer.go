@@ -70,10 +70,11 @@ func (c *consumer) Run(ctx context.Context) {
 		}
 
 		if err := c.flushBatch(ctx, batch); err != nil {
+			c.logger.Error("logs batch flush failed", zap.Error(err))
 			// send all messages to DLQ
 			for _, item := range batch {
-				if err :=
-					c.producer.SendToDLQ(ctx, item.msg.Key, item.msg.Value, err); err != nil {
+				err := c.producer.SendToDLQ(ctx, item.msg.Key, item.msg.Value, err)
+				if err != nil {
 					// log -> DLQ failed
 					c.logger.Error("logs DLQ failed", zap.Error(err))
 				}
@@ -108,31 +109,33 @@ func (c *consumer) Run(ctx context.Context) {
 		case <-flushTicker.C:
 			// flush batch & continue
 			flush()
-		}
 
-		// Add log to batch, and flush it if batch is populated to MaxBatchSize
-		ctxFetch, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		msg, err := c.reader.FetchMessage(ctxFetch)
-		cancel()
-		if err != nil {
-			continue
-		}
+		default:
+			// Add log to batch, and flush it if batch is populated to MaxBatchSize
+			ctxFetch, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			msg, err := c.reader.FetchMessage(ctxFetch)
+			cancel()
+			if err != nil {
+				continue
+			}
 
-		logEntry, err := domain.ParseLogFromJSON(msg.Value)
-		if err != nil {
-			// skip poison message with commit
-			c.reader.CommitMessages(ctx, msg)
-			continue
-		}
+			logEntry, err := domain.ParseLogFromJSON(msg.Value)
+			if err != nil {
+				// skip poison message with commit
+				c.reader.CommitMessages(ctx, msg)
+				continue
+			}
 
-		// append log to the batch
-		batch = append(batch, batchItem{log: *logEntry, msg: msg})
+			// append log to the batch
+			batch = append(batch, batchItem{log: *logEntry, msg: msg})
 
-		if len(batch) >= config.MaxBatchSize {
-			// batch is full
-			flush()
+			if len(batch) >= config.MaxBatchSize {
+				// batch is full
+				flush()
 
-			continue
+				continue
+			}
+
 		}
 	}
 }
@@ -145,16 +148,17 @@ func (c *consumer) flushBatch(ctx context.Context, batch []batchItem) error {
 		}
 
 		for _, item := range batch {
+			logEntryDB := item.log.ToDB()
 			if err := chBatch.Append(
-				item.log.ID,
-				item.log.Level,
-				item.log.Message,
-				item.log.ResourceID,
-				item.log.Timestamp,
-				item.log.TraceID,
-				item.log.SpanID,
-				item.log.Commit,
-				item.log.Metadata.ParentResourceID,
+				logEntryDB.ID,
+				logEntryDB.Level,
+				logEntryDB.Message,
+				logEntryDB.ResourceID,
+				logEntryDB.Timestamp,
+				logEntryDB.TraceID,
+				logEntryDB.SpanID,
+				logEntryDB.Commit,
+				logEntryDB.ParentResourceID,
 			); err != nil {
 				return err
 			}
@@ -165,14 +169,14 @@ func (c *consumer) flushBatch(ctx context.Context, batch []batchItem) error {
 }
 
 const flushQuery = `
-	INSERT INTO log_entries (
+	INSERT INTO logEntries (
 		id,
 		level,
 		message,
-		resource_id,
+		resourceId,
 		timestamp,
-		trace_id,
-		span_id,
+		traceId,
+		spanId,
 		commit,
-		parent_resource_id
+		parentResourceId
 	)`
