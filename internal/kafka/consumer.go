@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -14,6 +15,7 @@ import (
 
 type Consumer interface {
 	Run(context.Context)
+	Close()
 }
 
 type batchItem struct {
@@ -23,42 +25,91 @@ type batchItem struct {
 
 type consumer struct {
 	logger *zap.Logger
+	chConn clickhouse.Conn
 
-	producer Producer // for DLQ -> producer.dlq
+	producer Producer
 	reader   *kafka.Reader
-	chConn   clickhouse.Conn
+
+	itemsCh chan batchItem
 }
 
-func NewConsumer(brokers []string, chConn clickhouse.Conn, producer Producer, logger *zap.Logger) Consumer {
+func NewConsumer(
+	brokers []string,
+	chConn clickhouse.Conn,
+	producer Producer,
+	logger *zap.Logger,
+) Consumer {
 	return &consumer{
-		logger: logger,
-
+		logger:   logger,
+		chConn:   chConn,
 		producer: producer,
-
 		reader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers: brokers,
 			Topic:   string(LogsTopic),
 			GroupID: config.KafkaGroupID,
 		}),
 
-		chConn: chConn,
+		itemsCh: make(chan batchItem, config.MaxBatchSize*10),
 	}
 }
 
+// Close implements [Consumer].
 func (c *consumer) Close() {
 	if err := c.reader.Close(); err != nil {
-		c.logger.Error("error closing consumer", zap.Error(err))
+		c.logger.Error("failed closing kafka reader", zap.Error(err))
 		return
 	}
-
 	c.logger.Info("consumer closed")
 }
 
+// Run implements [Consumer].
 func (c *consumer) Run(ctx context.Context) {
 	defer c.Close()
 
-	c.logger.Info("initiating")
+	c.logger.Info("consumer started")
 
+	//worker pool for ingestion
+	workerCount := min(runtime.NumCPU()*2, 32)
+	for range workerCount {
+		go c.ingestWork(ctx)
+	}
+
+	// one flush coordinator
+	c.flushCoordinator(ctx)
+}
+
+func (c *consumer) ingestWork(ctx context.Context) {
+	for {
+		msg, err := c.fetchMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			continue
+		}
+
+		logEntry, err := domain.ParseLogFromJSON(msg.Value)
+		if err != nil {
+			_ = c.reader.CommitMessages(ctx, msg)
+			continue
+		}
+
+		select {
+		case c.itemsCh <- batchItem{log: *logEntry, msg: msg}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *consumer) fetchMessage(ctx context.Context) (kafka.Message, error) {
+	ctxFetch, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+
+	return c.reader.FetchMessage(ctxFetch)
+}
+
+func (c *consumer) flushCoordinator(ctx context.Context) {
 	flushTicker := time.NewTicker(config.FlushInterval)
 	defer flushTicker.Stop()
 
@@ -70,72 +121,44 @@ func (c *consumer) Run(ctx context.Context) {
 		}
 
 		if err := c.flushBatch(ctx, batch); err != nil {
-			c.logger.Error("logs batch flush failed", zap.Error(err))
-			// send all messages to DLQ
+			c.logger.Error("flush batch failed", zap.Error(err))
+
 			for _, item := range batch {
-				err := c.producer.SendToDLQ(ctx, item.msg.Key, item.msg.Value, err)
-				if err != nil {
-					// log -> DLQ failed
-					c.logger.Error("logs DLQ failed", zap.Error(err))
+				if dlqErr := c.producer.SendToDLQ(ctx, item.msg.Key, item.msg.Value, err); dlqErr != nil {
+					c.logger.Error("DLQ send failed", zap.Error(err))
 				}
-
 			}
-
-			return // Not commiting -> retry later
+			return
 		}
 
-		// commit success message
 		msgs := make([]kafka.Message, len(batch))
 		for i, item := range batch {
 			msgs[i] = item.msg
 		}
 
 		if err := c.reader.CommitMessages(ctx, msgs...); err != nil {
-			// commit failure -> don't clear batch
-			c.logger.Error("failed committing messages", zap.Error(err))
+			c.logger.Error("commit messages failed", zap.Error(err))
 			return
 		}
 
-		batch = batch[:0] // clear batch
+		// empty batch
+		batch = batch[:0]
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			// flush batch & stop consumer
 			flush()
 			return
 
-		case <-flushTicker.C:
-			// flush batch & continue
-			flush()
-
-		default:
-			// Add log to batch, and flush it if batch is populated to MaxBatchSize
-			ctxFetch, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-			msg, err := c.reader.FetchMessage(ctxFetch)
-			cancel()
-			if err != nil {
-				continue
-			}
-
-			logEntry, err := domain.ParseLogFromJSON(msg.Value)
-			if err != nil {
-				// skip poison message with commit
-				c.reader.CommitMessages(ctx, msg)
-				continue
-			}
-
-			// append log to the batch
-			batch = append(batch, batchItem{log: *logEntry, msg: msg})
-
+		case item := <-c.itemsCh:
+			batch = append(batch, item)
 			if len(batch) >= config.MaxBatchSize {
-				// batch is full
 				flush()
-
-				continue
 			}
 
+		case <-flushTicker.C:
+			flush()
 		}
 	}
 }
@@ -169,14 +192,14 @@ func (c *consumer) flushBatch(ctx context.Context, batch []batchItem) error {
 }
 
 const flushQuery = `
-	INSERT INTO logEntries (
-		id,
-		level,
-		message,
-		resourceId,
-		timestamp,
-		traceId,
-		spanId,
-		commit,
-		parentResourceId
-	)`
+INSERT INTO logEntries (
+	id,
+	level,
+	message,
+	resourceId,
+	timestamp,
+	traceId,
+	spanId,
+	commit,
+	parentResourceId
+)`
